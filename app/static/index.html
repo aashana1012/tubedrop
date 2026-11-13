@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TubeDrop</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff4d6d'/%3E%3Cstop offset='1' stop-color='%23ff9f43'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M16 7v12m0 0l-5-5m5 5l5-5M9 24h14' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"></div>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M6 20h12"/></svg>
+      </div>
+      <div class="brand-text">
+        <strong>TubeDrop</strong>
+        <span>Video &amp; MP3 downloader</span>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item active" data-view="download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+        <span>Download</span>
+        <em class="nav-badge" id="navActive" hidden>0</em>
+      </button>
+      <button class="nav-item" data-view="library">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
+        <span>Library</span>
+      </button>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <button class="ghost-btn wide" id="openFolderSide">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+        <span>Open downloads folder</span>
+      </button>
+      <div class="engine" id="engine">
+        <i class="dot"></i><span id="engineText">Checking engine…</span>
+      </div>
+      <button class="ghost-btn wide" id="themeToggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+        <span id="themeLabel">Light mode</span>
+      </button>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- ============================== DOWNLOAD VIEW -->
+    <section class="view active" id="view-download">
+      <header class="page-head">
+        <div>
+          <h1>Download center</h1>
+          <p>Paste a video or playlist link. Save it as MP3 or high-quality MP4.</p>
+        </div>
+      </header>
+
+      <div class="stats">
+        <div class="stat"><span class="stat-label">Downloading now</span><strong id="statActive">0</strong><span class="stat-sub" id="statQueued">0 waiting</span></div>
+        <div class="stat"><span class="stat-label">Completed</span><strong id="statDone">0</strong><span class="stat-sub" id="statFailed">0 failed</span></div>
+        <div class="stat"><span class="stat-label">Library files</span><strong id="statFiles">0</strong><span class="stat-sub" id="statSplit">0 audio · 0 video</span></div>
+        <div class="stat"><span class="stat-label">Library size</span><strong id="statSize">0 MB</strong><span class="stat-sub">on this PC</span></div>
+      </div>
+
+      <div class="card hero">
+        <form class="url-form" id="urlForm" autocomplete="off">
+          <div class="url-field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7"/></svg>
+            <input id="urlInput" type="text" placeholder="Paste a YouTube video or playlist link…" spellcheck="false">
+            <button type="button" class="chip-btn" id="pasteBtn">Paste</button>
+          </div>
+          <button type="submit" class="primary-btn" id="fetchBtn">
+            <span class="btn-label">Fetch</span>
+            <span class="spinner" hidden></span>
+          </button>
+        </form>
+        <p class="hint" id="urlHint">Works with single videos, Shorts, full playlists and albums.</p>
+      </div>
+
+      <div class="card preview" id="preview" hidden></div>
+
+      <div class="card queue-card">
+        <div class="card-head">
+          <h2>Activity</h2>
+          <div class="tabs" id="queueTabs">
+            <button class="tab active" data-filter="all">All</button>
+            <button class="tab" data-filter="active">Active</button>
+            <button class="tab" data-filter="done">Completed</button>
+            <button class="tab" data-filter="failed">Failed</button>
+          </div>
+          <div class="head-actions">
+            <button class="ghost-btn" id="retryFailedBtn" hidden>Retry failed</button>
+            <button class="ghost-btn" id="cancelAllBtn" hidden>Cancel all</button>
+            <button class="ghost-btn" id="clearBtn" hidden>Clear finished</button>
+          </div>
+        </div>
+        <div class="overall" id="overall" hidden>
+          <div class="overall-text"><span id="overallLabel"></span><span id="overallPct"></span></div>
+          <div class="bar"><i id="overallBar"></i></div>
+        </div>
+        <div class="queue" id="queue"></div>
+        <div class="empty" id="queueEmpty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+          <strong>No downloads yet</strong>
+          <span>Paste a link above to get started.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== LIBRARY VIEW -->
+    <section class="view" id="view-library">
+      <header class="page-head">
+        <div>
+          <h1>Library</h1>
+          <p id="libraryPath">Everything you have downloaded.</p>
+        </div>
+        <button class="ghost-btn" id="openFolderLib">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+          <span>Open folder</span>
+        </button>
+      </header>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input id="libSearch" type="search" placeholder="Search your downloads…">
+          </div>
+          <div class="tabs" id="libTabs">
+            <button class="tab active" data-kind="all">All</button>
+            <button class="tab" data-kind="audio">Audio</button>
+            <button class="tab" data-kind="video">Video</button>
+          </div>
+        </div>
+        <div class="lib-list" id="libList"></div>
+        <div class="empty" id="libEmpty" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
+          <strong>Nothing here yet</strong>
+          <span>Finished downloads show up in your library.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== SETTINGS VIEW -->
+    <section class="view" id="view-settings">
+      <header class="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p>Changes apply to new downloads.</p>
+        </div>
+      </header>
+
+      <div class="card settings">
+        <div class="setting">
+          <div class="setting-info">
+            <strong>Download folder</strong>
+            <span>MP3s go into a Music subfolder, videos into Videos. Playlists get their own folder.</span>
+          </div>
+          <div class="setting-control folder-control">
+            <input id="setDir" type="text" spellcheck="false">
+            <button class="ghost-btn" id="browseBtn">Browse…</button>
+            <button class="primary-btn small" id="saveDirBtn">Save</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-info">
+            <strong>Downloads at the same time</strong>
+            <span>More is faster for playlists but uses more bandwidth.</span>
+          </div>
+          <div class="setting-control">
+            <div class="stepper" id="concurrency">
+              <button data-step="-1" aria-label="Fewer">−</button>
+              <output id="setConcurrent">3</output>
+              <button data-step="1" aria-label="More">+</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-info">
+            <strong>Embed cover art</strong>
+            <span>Adds the video thumbnail as album art in the file.</span>
+          </div>
+          <div class="setting-control">
+            <label class="switch"><input type="checkbox" id="setThumb"><i></i></label>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-info">
+            <strong>Write title and artist tags</strong>
+            <span>Music players will show the right title and channel name.</span>
+          </div>
+          <div class="setting-control">
+            <label class="switch"><input type="checkbox" id="setMeta"><i></i></label>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-info">
+            <strong>Download engine</strong>
+            <span id="engineDetail">Checking…</span>
+          </div>
+          <div class="setting-control">
+            <span class="muted small-text">If downloads start failing, run <code>update.bat</code> and restart.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Bottom audio player -->
+<div class="player" id="player" hidden>
+  <div class="player-info">
+    <div class="player-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
+    </div>
+    <div class="player-title" id="playerTitle"></div>
+  </div>
+  <audio id="audioEl" controls></audio>
+  <button class="icon-btn" id="playerClose" aria-label="Close player">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+</div>
+
+<!-- Video modal -->
+<div class="modal" id="videoModal" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <strong id="videoTitle"></strong>
+      <button class="icon-btn" id="videoClose" aria-label="Close video">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <video id="videoEl" controls></video>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
