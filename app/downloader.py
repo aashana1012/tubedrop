@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -11,8 +13,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import requests
 import yt_dlp
-from yt_dlp.utils import DownloadCancelled, sanitize_filename
+from yt_dlp.postprocessor import EmbedThumbnailPP, FFmpegThumbnailsConvertorPP
+from yt_dlp.utils import DownloadCancelled, PostProcessingError, sanitize_filename
+
+from .instagram import is_instagram
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -22,9 +28,14 @@ DEFAULT_DOWNLOAD_DIR = BASE_DIR / "downloads"
 
 AUDIO_QUALITIES = ("320", "256", "192", "128")
 VIDEO_QUALITIES = ("best", "4320", "2160", "1440", "1080", "720", "480", "360")
-MEDIA_EXTENSIONS = {".mp3", ".m4a", ".opus", ".mp4", ".mkv", ".webm"}
+MEDIA_EXTENSIONS = {".mp3", ".m4a", ".opus", ".mp4", ".mkv", ".webm", ".mov"}
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".opus"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+LIBRARY_EXTENSIONS = MEDIA_EXTENSIONS | IMAGE_EXTENSIONS
+INSTAGRAM_FOLDER = "Instagram"
 HISTORY_LIMIT = 300
+DIRECT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TubeDrop"
+EXPIRED_LINK = "This Instagram link has expired. Fetch the post again, then download it."
 
 ACTIVE_STATES = {"fetching", "downloading", "processing"}
 FINISHED_STATES = {"done", "error", "cancelled"}
@@ -63,6 +74,46 @@ def find_ffmpeg() -> str | None:
     return str(Path(found).parent) if found else None
 
 
+class _SafeThumbnailsConvertor(FFmpegThumbnailsConvertorPP):
+    """Cover-art conversion that reports a problem instead of failing the whole download."""
+
+    def __init__(self, downloader, on_problem) -> None:
+        super().__init__(downloader, format="jpg")
+        self._on_problem = on_problem
+
+    @classmethod
+    def pp_key(cls) -> str:
+        return "ThumbnailsConvertor"
+
+    def run(self, info):
+        try:
+            return super().run(info)
+        except (PostProcessingError, OSError) as exc:
+            self._on_problem(clean_error(exc))
+            return [], info
+
+
+class _SafeEmbedThumbnail(EmbedThumbnailPP):
+    """Cover-art embedding that leaves the finished file alone if the image cannot be added."""
+
+    def __init__(self, downloader, on_problem) -> None:
+        super().__init__(downloader, already_have_thumbnail=False)
+        self._on_problem = on_problem
+
+    @classmethod
+    def pp_key(cls) -> str:
+        return "EmbedThumbnail"
+
+    def run(self, info):
+        try:
+            return super().run(info)
+        except (PostProcessingError, OSError) as exc:
+            self._on_problem(clean_error(exc))
+            # Hand the unused image back to yt-dlp so it is deleted, not left beside the song.
+            unused = [t["filepath"] for t in info.get("thumbnails") or [] if t.get("filepath")]
+            return unused, info
+
+
 class _QuietLogger:
     def debug(self, msg: str) -> None: ...
     def info(self, msg: str) -> None: ...
@@ -79,6 +130,7 @@ class Settings:
         "max_concurrent": 3,
         "embed_thumbnail": True,
         "embed_metadata": True,
+        "instagram_cookies": "",
     }
 
     def __init__(self) -> None:
@@ -99,8 +151,31 @@ class Settings:
     def max_concurrent(self) -> int:
         return int(self.data["max_concurrent"])
 
+    @property
+    def instagram_cookies(self) -> Path | None:
+        """The user's Instagram cookies file, if one is set and still exists."""
+        raw = self.data.get("instagram_cookies") or ""
+        path = Path(raw) if raw else None
+        return path if path and path.is_file() else None
+
+    @staticmethod
+    def _check_cookies_file(raw: str) -> str:
+        path = Path(raw.strip().strip('"'))
+        if not path.is_absolute() or not path.is_file():
+            raise ValueError("That cookies file could not be found.")
+        if path.stat().st_size > 2_000_000:
+            raise ValueError("That file is too large to be a cookies file.")
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "instagram.com" not in text or "sessionid" not in text:
+            raise ValueError(
+                "That file has no Instagram login in it. Export cookies while logged in to instagram.com.")
+        return str(path)
+
     def update(self, changes: dict[str, Any]) -> None:
         with self._lock:
+            if "instagram_cookies" in changes:
+                raw = str(changes["instagram_cookies"] or "")
+                self.data["instagram_cookies"] = self._check_cookies_file(raw) if raw.strip() else ""
             if "download_dir" in changes:
                 path = Path(str(changes["download_dir"]).strip().strip('"'))
                 if not path.is_absolute():
@@ -119,7 +194,7 @@ class Settings:
 # --------------------------------------------------------------------------- analysis
 
 
-def _base_opts() -> dict[str, Any]:
+def _base_opts(cookiefile: Path | None = None) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -134,6 +209,8 @@ def _base_opts() -> dict[str, Any]:
     ffmpeg = find_ffmpeg()
     if ffmpeg:
         opts["ffmpeg_location"] = ffmpeg
+    if cookiefile:
+        opts["cookiefile"] = str(cookiefile)
     return opts
 
 
@@ -148,9 +225,9 @@ def _thumb(entry: dict[str, Any]) -> str | None:
     return None
 
 
-def analyze(url: str, noplaylist: bool = False) -> dict[str, Any]:
+def analyze(url: str, noplaylist: bool = False, cookiefile: Path | None = None) -> dict[str, Any]:
     """Look up a URL and describe it as a single video or a playlist."""
-    opts = _base_opts() | {
+    opts = _base_opts(cookiefile) | {
         "extract_flat": "in_playlist",
         "noplaylist": noplaylist,
         "skip_download": True,
@@ -226,6 +303,12 @@ class Job:
     playlist_title: str | None = None
     index: int | None = None
     index_pad: int = 2
+    # Instagram items are saved straight from a media link instead of through yt-dlp.
+    source: str = "youtube"          # "youtube" | "instagram"
+    kind: str = "video"              # "video" | "photo"
+    media_url: str | None = None
+    media_ext: str | None = None
+    file_stem: str | None = None
     status: str = "queued"
     stage: str = "Waiting in queue"
     progress: float = 0.0
@@ -243,7 +326,8 @@ class Job:
 
     PUBLIC = (
         "id", "url", "mode", "quality", "title", "thumbnail", "duration", "uploader",
-        "playlist_title", "index", "index_pad", "status", "stage", "progress", "speed", "eta",
+        "playlist_title", "index", "index_pad", "source", "kind", "media_url", "media_ext", "file_stem",
+        "status", "stage", "progress", "speed", "eta",
         "downloaded_bytes", "total_bytes", "filepath", "filesize", "error", "skipped",
         "created_at", "finished_at",
     )
@@ -295,16 +379,21 @@ class JobManager:
         with self.lock:
             # Two unfinished jobs writing the same file would collide, so skip exact repeats.
             pending = {
-                (j.url, j.mode, j.playlist_title, j.index)
+                (j.url, j.mode, j.playlist_title, j.index, j.file_stem)
                 for j in self.jobs.values() if j.status not in FINISHED_STATES
             }
             for item in items:
                 index = item.get("index") if number_files else None
-                key = (item["url"], mode, playlist_title, index)
+                key = (item["url"], mode, playlist_title, index, item.get("file_stem"))
                 if key in pending:
                     continue
                 pending.add(key)
                 job = Job(
+                    source=item.get("source") or "youtube",
+                    kind=item.get("kind") or "video",
+                    media_url=item.get("media_url"),
+                    media_ext=item.get("media_ext"),
+                    file_stem=item.get("file_stem"),
                     id=uuid.uuid4().hex[:12],
                     url=item["url"],
                     mode=mode,
@@ -419,7 +508,10 @@ class JobManager:
 
     def _worker(self, job: Job) -> None:
         try:
-            self._run(job)
+            if job.source == "instagram" and job.media_url:
+                self._run_direct(job)
+            else:
+                self._run(job)
         except DownloadCancelled:
             self._finish(job, "cancelled", "Cancelled")
         except Exception as exc:
@@ -448,7 +540,8 @@ class JobManager:
         name = "%(title).180B.%(ext)s" if job.mode == "audio" else "%(title).180B [%(height)sp].%(ext)s"
         template = str(folder).replace("%", "%%") + "\\" + prefix + name
 
-        opts = _base_opts() | {
+        cookies = self.settings.instagram_cookies if is_instagram(job.url) else None
+        opts = _base_opts(cookies) | {
             "outtmpl": template,
             "noplaylist": True,
             "overwrites": False,
@@ -476,9 +569,8 @@ class JobManager:
         if self.settings.data["embed_metadata"]:
             postprocessors.append({"key": "FFmpegMetadata", "add_metadata": True, "add_chapters": True})
         if self.settings.data["embed_thumbnail"]:
+            # The cover-art steps themselves are added in _run, in a form that cannot fail the download.
             opts["writethumbnail"] = True
-            postprocessors.append({"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"})
-            postprocessors.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
 
         opts["postprocessors"] = postprocessors
         return opts
@@ -523,9 +615,14 @@ class JobManager:
         opts = self._build_opts(job, progress_hook, pp_hook)
         final_ext = ".mp3" if job.mode == "audio" else ".mp4"
         target: Path | None = None
+        cover_problems: list[str] = []
 
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
+                if opts.get("writethumbnail"):
+                    # Added after the main steps so they run last: convert the image, then embed it.
+                    ydl.add_post_processor(_SafeThumbnailsConvertor(ydl, cover_problems.append), when="before_dl")
+                    ydl.add_post_processor(_SafeEmbedThumbnail(ydl, cover_problems.append), when="post_process")
                 info = ydl.extract_info(job.url, download=False)
                 if not info:
                     raise RuntimeError("Video is unavailable.")
@@ -559,7 +656,122 @@ class JobManager:
             raise RuntimeError("Download finished but the output file is missing.")
         job.filepath, job.filesize = str(final), final.stat().st_size
         job.progress = 100.0
+        self._finish(job, "done", "Completed without cover art" if cover_problems else "Completed")
+
+    # ---- Instagram: save a photo or video straight from its media link
+
+    def _run_direct(self, job: Job) -> None:
+        owner = sanitize_filename(job.uploader or "instagram", restricted=False).strip(" .") or "instagram"
+        folder = self.settings.download_dir / INSTAGRAM_FOLDER / owner
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = sanitize_filename(job.file_stem or job.id, restricted=False).strip(" .") or job.id
+        source_ext = "." + (job.media_ext or ("jpg" if job.kind == "photo" else "mp4")).lstrip(".")
+        wants_audio = job.kind == "video" and job.mode == "audio"
+        target = folder / (stem + (".mp3" if wants_audio else source_ext))
+
+        if target.exists():
+            job.filepath, job.filesize = str(target), target.stat().st_size
+            job.skipped, job.progress = True, 100.0
+            self._finish(job, "done", "Already downloaded")
+            return
+        if wants_audio and not find_ffmpeg():
+            raise RuntimeError("ffmpeg was not found. Install it with: winget install Gyan.FFmpeg")
+
+        part = folder / (stem + source_ext + ".part")
+        try:
+            self._fetch(job, part)
+            if wants_audio:
+                self._to_mp3(job, part, target)
+            else:
+                os.replace(part, target)
+        finally:
+            try:
+                part.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        job.filepath, job.filesize = str(target), target.stat().st_size
+        job.progress = 100.0
         self._finish(job, "done", "Completed")
+
+    def _fetch(self, job: Job, destination: Path) -> None:
+        """Stream a media link to disk, reporting progress and honouring cancel."""
+        job.status, job.stage = "downloading", "Downloading"
+        try:
+            response = requests.get(
+                str(job.media_url), stream=True, timeout=(15, 60),
+                headers={"User-Agent": DIRECT_USER_AGENT},
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError("Could not reach Instagram's media server. Check your connection.") from exc
+        with response:
+            if response.status_code in (401, 403, 404, 410):
+                raise RuntimeError(EXPIRED_LINK)
+            if response.status_code >= 400:
+                raise RuntimeError(f"Instagram's media server answered with error {response.status_code}.")
+            total = int(response.headers.get("content-length") or 0)
+            job.total_bytes = total
+            started = time.monotonic()
+            done = 0
+            try:
+                with open(destination, "wb") as handle:
+                    for chunk in response.iter_content(chunk_size=256 * 1024):
+                        if job.cancel.is_set():
+                            raise DownloadCancelled()
+                        handle.write(chunk)
+                        done += len(chunk)
+                        elapsed = max(time.monotonic() - started, 0.001)
+                        job.downloaded_bytes = done
+                        job.speed = done / elapsed
+                        if total:
+                            job.progress = min(99.0, done / total * 100)
+                            job.eta = (total - done) / job.speed if job.speed else None
+            except requests.RequestException as exc:
+                raise RuntimeError("The download was interrupted. Try again.") from exc
+        if done == 0:
+            raise RuntimeError("Instagram sent an empty file. Fetch the post again, then download it.")
+        job.total_bytes = job.total_bytes or done
+
+    def _to_mp3(self, job: Job, source: Path, target: Path) -> None:
+        """Pull the sound out of a downloaded video with ffmpeg."""
+        job.status, job.stage = "processing", "Converting to MP3"
+        job.speed = job.eta = None
+        bitrate = job.quality if job.quality in AUDIO_QUALITIES else "320"
+        ffmpeg = str(Path(find_ffmpeg() or "") / "ffmpeg")
+        temp = target.with_name(target.stem + ".tmp.mp3")
+        command = [ffmpeg, "-y", "-loglevel", "error", "-i", str(source),
+                   "-vn", "-c:a", "libmp3lame", "-b:a", f"{bitrate}k"]
+        if self.settings.data["embed_metadata"]:
+            command += ["-metadata", f"title={job.title}", "-metadata", f"artist={job.uploader or ''}"]
+        command.append(str(temp))
+
+        process = subprocess.Popen(
+            command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        errors = ""
+        try:
+            while True:
+                try:
+                    _, errors = process.communicate(timeout=0.3)
+                    break
+                except subprocess.TimeoutExpired:
+                    if job.cancel.is_set():
+                        process.kill()
+                        process.communicate()
+                        raise DownloadCancelled() from None
+            if process.returncode != 0:
+                lowered = (errors or "").lower()
+                if "does not contain any stream" in lowered or "matches no streams" in lowered:
+                    raise RuntimeError("This video has no sound, so there is nothing to save as MP3.")
+                raise RuntimeError("Converting to MP3 failed. The video file may be damaged.")
+            os.replace(temp, target)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _cleanup_partials(streams: dict[str, tuple[int, int]], target: Path | None) -> None:
@@ -591,19 +803,23 @@ def list_library(root: Path) -> list[dict[str, Any]]:
     if not root.exists():
         return files
     for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in MEDIA_EXTENSIONS:
+        suffix = path.suffix.lower()
+        if not path.is_file() or suffix not in LIBRARY_EXTENSIONS:
+            continue
+        rel = path.relative_to(root)
+        # Images only count inside the Instagram folder; elsewhere they are yt-dlp's temporary cover art.
+        if suffix in IMAGE_EXTENSIONS and rel.parts[0] != INSTAGRAM_FOLDER:
             continue
         try:
             stat = path.stat()
         except OSError:
             continue
-        rel = path.relative_to(root)
         files.append({
             "path": rel.as_posix(),
             "name": path.stem,
             "ext": path.suffix.lower().lstrip("."),
             "folder": rel.parent.as_posix() if rel.parent != Path(".") else "",
-            "kind": "audio" if path.suffix.lower() in AUDIO_EXTENSIONS else "video",
+            "kind": "audio" if suffix in AUDIO_EXTENSIONS else "image" if suffix in IMAGE_EXTENSIONS else "video",
             "size": stat.st_size,
             "modified": stat.st_mtime,
         })

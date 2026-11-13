@@ -22,6 +22,8 @@
   --bad-soft: rgba(255, 93, 115, 0.13);
   --info: #6aa8ff;
   --info-soft: rgba(106, 168, 255, 0.14);
+  --ig: #f06aa6;
+  --ig-soft: rgba(240, 106, 166, 0.14);
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   --radius: 18px;
   --radius-sm: 12px;
@@ -51,6 +53,8 @@
   --bad-soft: rgba(217, 47, 74, 0.1);
   --info: #2f6fdb;
   --info-soft: rgba(47, 111, 219, 0.1);
+  --ig: #c2257a;
+  --ig-soft: rgba(194, 37, 122, 0.1);
   --shadow: 0 14px 40px rgba(20, 24, 36, 0.1);
   --glow-1: rgba(255, 77, 109, 0.12);
   --glow-2: rgba(255, 159, 67, 0.12);
@@ -263,6 +267,12 @@ code {
   position: absolute; right: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px;
   background: rgba(0, 0, 0, 0.78); color: #fff; font-size: 12px; font-weight: 600;
 }
+.pv-thumb.tall { width: 210px; aspect-ratio: 4 / 5; }
+.pv-kind.ig { background: linear-gradient(120deg, rgba(245, 133, 41, 0.18), rgba(221, 42, 123, 0.2), rgba(129, 52, 175, 0.2)); color: var(--ig); }
+.pv-caption {
+  margin: 0; font-size: 13.5px; color: var(--text-2); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .pv-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
 .pv-kind {
   align-self: flex-start; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
@@ -345,6 +355,9 @@ code {
   background: var(--info-soft); color: var(--info);
 }
 .badge.audio { background: var(--accent-soft); color: var(--accent); }
+.badge.ig { background: var(--ig-soft); color: var(--ig); }
+.pl-row.skip { opacity: 0.35; }
+.pl-row.skip .pl-title strong { text-decoration: line-through; }
 .job-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .job-stage { font-weight: 600; color: var(--text-2); }
 .job.done .job-stage { color: var(--ok); }
@@ -372,6 +385,7 @@ code {
 .lib-row:hover { background: var(--surface-2); }
 .lib-icon { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
 .lib-icon.video { background: var(--info-soft); color: var(--info); }
+.lib-icon.image { background: var(--ig-soft); color: var(--ig); }
 .lib-icon:hover { filter: brightness(1.2); }
 .lib-name { min-width: 0; }
 .lib-name strong { display: block; font-size: 14.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -388,6 +402,13 @@ code {
 .setting-info strong { display: block; font-size: 15px; }
 .setting-info span { font-size: 13px; color: var(--text-3); }
 .setting-control { display: flex; align-items: center; gap: 8px; flex: none; max-width: 56%; }
+.setting:has(+ .setting-help:not([hidden])) { border-bottom: 0; padding-bottom: 8px; }
+.setting-help {
+  margin: 0 0 18px; padding: 14px 18px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border-bottom: 0; font-size: 13.5px; color: var(--text-2);
+}
+.setting-help ol { margin: 0 0 10px; padding-left: 20px; display: grid; gap: 4px; }
+.setting-help p { margin: 0; color: var(--text-3); font-size: 13px; }
 .folder-control { flex: 1; }
 .folder-control input {
   flex: 1; min-width: 0; height: 40px; padding: 0 12px; border-radius: 11px;
@@ -430,6 +451,7 @@ code {
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px 10px 18px; }
 .modal-head strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .modal video { display: block; width: 100%; max-height: 76vh; background: #000; }
+.modal img { display: block; width: 100%; max-height: 76vh; object-fit: contain; background: #000; }
 
 .toasts { position: fixed; top: 18px; right: 18px; z-index: 40; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .toast {

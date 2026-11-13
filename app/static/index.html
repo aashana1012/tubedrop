@@ -60,7 +60,7 @@
       <header class="page-head">
         <div>
           <h1>Download center</h1>
-          <p>Paste a video or playlist link. Save it as MP3 or high-quality MP4.</p>
+          <p>Paste a YouTube or Instagram link. Save it as MP3, high-quality MP4, or the original photo.</p>
         </div>
       </header>
 
@@ -75,7 +75,7 @@
         <form class="url-form" id="urlForm" autocomplete="off">
           <div class="url-field">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7"/></svg>
-            <input id="urlInput" type="text" placeholder="Paste a YouTube video or playlist link…" spellcheck="false">
+            <input id="urlInput" type="text" placeholder="Paste a YouTube or Instagram link…" spellcheck="false">
             <button type="button" class="chip-btn" id="pasteBtn">Paste</button>
           </div>
           <button type="submit" class="primary-btn" id="fetchBtn">
@@ -83,7 +83,7 @@
             <span class="spinner" hidden></span>
           </button>
         </form>
-        <p class="hint" id="urlHint">Works with single videos, Shorts, full playlists and albums.</p>
+        <p class="hint" id="urlHint">YouTube videos, Shorts and playlists. Instagram reels, posts, stories and profile pictures.</p>
       </div>
 
       <div class="card preview" id="preview" hidden></div>
@@ -139,6 +139,7 @@
             <button class="tab active" data-kind="all">All</button>
             <button class="tab" data-kind="audio">Audio</button>
             <button class="tab" data-kind="video">Video</button>
+            <button class="tab" data-kind="image">Photos</button>
           </div>
         </div>
         <div class="lib-list" id="libList"></div>
@@ -208,6 +209,27 @@
 
         <div class="setting">
           <div class="setting-info">
+            <strong>Instagram login</strong>
+            <span id="igStatus">Not connected.</span>
+          </div>
+          <div class="setting-control">
+            <button class="ghost-btn" id="igHelpBtn">How?</button>
+            <button class="ghost-btn" id="igRemoveBtn" hidden>Remove</button>
+            <button class="primary-btn small" id="igChooseBtn">Choose cookies file…</button>
+          </div>
+        </div>
+        <div class="setting-help" id="igHelp" hidden>
+          <ol>
+            <li>Log in to instagram.com in your normal browser.</li>
+            <li>Add a browser extension that exports cookies in the <code>cookies.txt</code> format.</li>
+            <li>While on instagram.com, use it to export a cookies file and save it somewhere safe.</li>
+            <li>Press <strong>Choose cookies file…</strong> here and select that file.</li>
+          </ol>
+          <p>The file stays on this PC and is only used to talk to Instagram. Treat it like a password, because anyone holding it can use your account. Instagram may limit accounts that download a lot, so go gently.</p>
+        </div>
+
+        <div class="setting">
+          <div class="setting-info">
             <strong>Download engine</strong>
             <span id="engineDetail">Checking…</span>
           </div>
@@ -244,6 +266,7 @@
       </button>
     </div>
     <video id="videoEl" controls></video>
+    <img id="imageEl" alt="" hidden>
   </div>
 </div>
 

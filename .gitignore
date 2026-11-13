@@ -4,3 +4,6 @@ data/
 __pycache__/
 *.pyc
 .claude/settings.local.json
+
+# Login cookies are as sensitive as a password. Never commit them.
+*cookies*.txt

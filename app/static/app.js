@@ -73,7 +73,20 @@ const ICON = {
   retry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0115.5-6.2L21 8M21 3v5h-5M21 12a9 9 0 01-15.5 6.2L3 16m0 5v-5h5"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>',
 };
+
+// Instagram's image servers refuse to load inside other pages, so those go through the app.
+function thumbSrc(url) {
+  if (!url) return "";
+  try {
+    const host = new URL(url).hostname;
+    if (host.endsWith(".cdninstagram.com") || host.endsWith(".fbcdn.net")) {
+      return "/api/thumb?url=" + encodeURIComponent(url);
+    }
+  } catch { /* not an absolute link */ }
+  return url;
+}
 
 const AUDIO_OPTIONS = [
   { value: "320", label: "320 kbps", note: "Best" },
@@ -101,6 +114,7 @@ const state = {
   audioQ: store.get("td.audioQ", "320"),
   videoQ: store.get("td.videoQ", "best"),
   numberFiles: store.get("td.number", "1") === "1",
+  igMode: store.get("td.igMode", "original"),   // "original" (photo / video as posted) | "audio"
   selected: new Set(),
   jobs: [],
   jobEls: new Map(),
@@ -165,7 +179,8 @@ async function analyze(noplaylist = false) {
     state.analysis = data;
     state.analyzedUrl = url;
     state.selected = new Set(
-      data.type === "playlist" ? data.entries.filter((e) => !e.unavailable).map((e) => e.index) : []);
+      data.type === "playlist" ? data.entries.filter((e) => !e.unavailable).map((e) => e.index)
+        : data.type === "instagram" ? data.items.map((i) => i.index) : []);
     setHint("");
     renderPreview();
   } catch (err) {
@@ -208,8 +223,89 @@ function currentQuality() {
   return options.some((o) => o.value === state.videoQ) ? state.videoQ : "best";
 }
 
+/* Instagram: "original" saves photos and videos as posted, "audio" turns videos into MP3. */
+function igMode() {
+  return state.analysis.video_count ? state.igMode : "original";
+}
+
+function igChosen() {
+  const audio = igMode() === "audio";
+  return state.analysis.items.filter((i) => state.selected.has(i.index) && (!audio || i.kind === "video"));
+}
+
+function igDownloadLabel() {
+  const items = igChosen();
+  const audio = igMode() === "audio";
+  if (!items.length) return audio ? "Select a video" : "Select at least one";
+  if (audio) return items.length === 1 ? "Download MP3" : `Download ${items.length} as MP3`;
+  if (items.length === 1) return items[0].kind === "photo" ? "Download photo" : "Download video";
+  return `Download ${items.length} items`;
+}
+
+function igFormatControls() {
+  const a = state.analysis;
+  const audio = igMode() === "audio";
+  const original = a.video_count && a.photo_count ? "Photos and videos" : a.video_count ? "Video" : "Photo";
+  return `
+    <div class="seg" role="tablist">
+      <button data-igmode="original" class="${audio ? "" : "active"}">${a.video_count && !a.photo_count ? ICON.video : ICON.image}${original}</button>
+      <button data-igmode="audio" class="${audio ? "active" : ""}" ${a.video_count ? "" : 'disabled title="There is no video here to take audio from"'}>${ICON.music}Audio only (MP3)</button>
+    </div>
+    ${audio ? `<div class="quality">${AUDIO_OPTIONS.map((o) =>
+      `<button class="q-chip ${o.value === state.audioQ ? "active" : ""}" data-quality="${o.value}">${o.label}${o.note ? `<small>${esc(o.note)}</small>` : ""}</button>`).join("")}</div>` : ""}`;
+}
+
+function renderInstagram() {
+  const a = state.analysis;
+  const first = a.items[0];
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const meta = [a.fullname, a.photo_count ? plural(a.photo_count, "photo") : "", a.video_count ? plural(a.video_count, "video") : ""]
+    .filter(Boolean).map((m) => `<span>${esc(m)}</span>`).join("");
+  const size = (i) => (i.width && i.height ? `${i.width} × ${i.height}` : "");
+
+  preview.innerHTML = `
+    <div class="pv-top">
+      <div class="pv-thumb tall">
+        ${first.preview_url ? `<img src="${esc(thumbSrc(first.preview_url))}" alt="">` : ""}
+      </div>
+      <div class="pv-body">
+        <div class="job-line">
+          <span class="pv-kind ig">Instagram · ${esc(a.label)}</span>
+          <button class="icon-btn pv-close" data-act="close" aria-label="Dismiss">${ICON.close}</button>
+        </div>
+        <h3 class="pv-title">${esc(a.title)}</h3>
+        <div class="pv-meta">${meta}</div>
+        ${a.caption ? `<p class="pv-caption">${esc(a.caption)}</p>` : ""}
+        <div class="format-row" id="formatRow">${igFormatControls()}</div>
+        <div class="pv-actions">
+          <button class="primary-btn" id="dlBtn">${ICON.download}<span></span></button>
+          ${a.kind === "avatar" ? `<button class="ghost-btn" data-act="stories">Get @${esc(a.username)}'s stories</button>` : ""}
+        </div>
+      </div>
+    </div>
+    ${a.count > 1 ? `
+      <div class="pl-tools">
+        <button class="ghost-btn" data-act="all">Select all</button>
+        <button class="ghost-btn" data-act="none">Select none</button>
+        <span class="pl-count" id="plCount"></span>
+      </div>
+      <div class="pl-list" id="plList">
+        ${a.items.map((i) => `
+          <label class="pl-row ${state.selected.has(i.index) ? "" : "off"}" data-index="${i.index}" data-kind="${i.kind}" data-title="">
+            <input type="checkbox" ${state.selected.has(i.index) ? "checked" : ""}>
+            <span class="pl-num">${i.index}</span>
+            ${i.preview_url ? `<img src="${esc(thumbSrc(i.preview_url))}" alt="" loading="lazy">` : "<span></span>"}
+            <span class="pl-title"><strong>${i.kind === "photo" ? "Photo" : "Video"} ${i.index}</strong><span>${esc(size(i))}</span></span>
+            <span class="badge ${i.kind === "photo" ? "ig" : ""}">${i.kind === "photo" ? "PHOTO" : "VIDEO"}</span>
+          </label>`).join("")}
+      </div>` : ""}`;
+  preview.hidden = false;
+  refreshSelection();
+}
+
 function downloadLabel() {
   const a = state.analysis;
+  if (a.type === "instagram") return igDownloadLabel();
   const what = state.mode === "audio" ? "MP3" : "MP4";
   if (a.type === "playlist") {
     const n = state.selected.size;
@@ -238,6 +334,7 @@ function hasVideoAndList(url) {
 function renderPreview() {
   const a = state.analysis;
   if (!a) { preview.hidden = true; preview.innerHTML = ""; return; }
+  if (a.type === "instagram") return renderInstagram();
   const isList = a.type === "playlist";
   const first = isList ? a.entries[0] : a;
   const thumb = first && first.thumbnail;
@@ -261,7 +358,7 @@ function renderPreview() {
   preview.innerHTML = `
     <div class="pv-top">
       <div class="pv-thumb">
-        ${thumb ? `<img src="${esc(thumb)}" alt="" referrerpolicy="no-referrer">` : ""}
+        ${thumb ? `<img src="${esc(thumbSrc(thumb))}" alt="" referrerpolicy="no-referrer">` : ""}
         ${!isList && a.duration ? `<span class="dur">${fmtDuration(a.duration)}</span>` : ""}
       </div>
       <div class="pv-body">
@@ -306,17 +403,25 @@ function renderPreview() {
 function refreshSelection() {
   const a = state.analysis;
   if (!a) return;
+  const instagram = a.type === "instagram";
   const btn = $("#dlBtn");
   if (btn) {
     $("span", btn).textContent = downloadLabel();
-    btn.disabled = a.type === "playlist" && state.selected.size === 0;
+    btn.disabled = instagram ? igChosen().length === 0 : a.type === "playlist" && state.selected.size === 0;
   }
   const count = $("#plCount");
-  if (count) count.textContent = `${state.selected.size} of ${a.count} selected`;
+  if (count) {
+    const skipped = instagram && igMode() === "audio" && a.photo_count ? " · photos are skipped for MP3" : "";
+    count.textContent = `${state.selected.size} of ${a.count} selected${skipped}`;
+  }
+  if (instagram) {
+    const audio = igMode() === "audio";
+    $$(".pl-row", preview).forEach((r) => r.classList.toggle("skip", audio && r.dataset.kind === "photo"));
+  }
 }
 
 function refreshFormat() {
-  $("#formatRow").innerHTML = formatControls();
+  $("#formatRow").innerHTML = state.analysis.type === "instagram" ? igFormatControls() : formatControls();
   refreshSelection();
 }
 
@@ -334,9 +439,17 @@ preview.addEventListener("click", (e) => {
     store.set("td.mode", state.mode);
     return refreshFormat();
   }
+  const igBtn = e.target.closest("[data-igmode]");
+  if (igBtn) {
+    if (igBtn.disabled) return;
+    state.igMode = igBtn.dataset.igmode;
+    store.set("td.igMode", state.igMode);
+    return refreshFormat();
+  }
   const qBtn = e.target.closest("[data-quality]");
   if (qBtn) {
-    if (state.mode === "audio") { state.audioQ = qBtn.dataset.quality; store.set("td.audioQ", state.audioQ); }
+    const audioChoice = state.analysis.type === "instagram" || state.mode === "audio";
+    if (audioChoice) { state.audioQ = qBtn.dataset.quality; store.set("td.audioQ", state.audioQ); }
     else { state.videoQ = qBtn.dataset.quality; store.set("td.videoQ", state.videoQ); }
     return refreshFormat();
   }
@@ -344,6 +457,10 @@ preview.addEventListener("click", (e) => {
   if (act) {
     const name = act.dataset.act;
     if (name === "close") { state.analysis = null; return renderPreview(); }
+    if (name === "stories") {
+      urlInput.value = `https://www.instagram.com/stories/${state.analysis.username}/`;
+      return analyze();
+    }
     if (name === "single") return analyze(true);
     if (name === "whole") return analyze(false);
     if (name === "all" || name === "none") {
@@ -370,29 +487,48 @@ preview.addEventListener("input", (e) => {
   $$(".pl-row", preview).forEach((r) => { r.hidden = Boolean(q) && !r.dataset.title.includes(q); });
 });
 
+function downloadRequest(a) {
+  if (a.type === "instagram") {
+    const audio = igMode() === "audio";
+    return {
+      source: "instagram",
+      mode: audio ? "audio" : "video",
+      quality: audio ? state.audioQ : "best",
+      items: igChosen().map((i) => ({
+        url: a.url,
+        title: a.count > 1 ? `${a.title} (${i.index} of ${a.count})` : a.title,
+        thumbnail: i.preview_url,
+        uploader: a.username,
+        media_url: i.media_url,
+        kind: i.kind,
+        ext: i.ext,
+        file_stem: i.file_stem,
+      })),
+    };
+  }
+  const isList = a.type === "playlist";
+  return {
+    mode: state.mode,
+    quality: currentQuality(),
+    playlist_title: isList ? a.title : null,
+    number_files: isList && state.numberFiles,
+    items: isList
+      ? a.entries.filter((e) => state.selected.has(e.index))
+        .map((e) => ({ url: e.url, title: e.title, thumbnail: e.thumbnail, duration: e.duration, uploader: e.uploader, index: e.index }))
+      : [{ url: a.url, title: a.title, thumbnail: a.thumbnail, duration: a.duration, uploader: a.uploader }],
+  };
+}
+
 async function startDownload() {
   const a = state.analysis;
   if (!a) return;
-  const isList = a.type === "playlist";
-  const items = isList
-    ? a.entries.filter((e) => state.selected.has(e.index))
-      .map((e) => ({ url: e.url, title: e.title, thumbnail: e.thumbnail, duration: e.duration, uploader: e.uploader, index: e.index }))
-    : [{ url: a.url, title: a.title, thumbnail: a.thumbnail, duration: a.duration, uploader: a.uploader }];
-  if (!items.length) return;
+  const body = downloadRequest(a);
+  if (!body.items.length) return;
 
   const btn = $("#dlBtn");
   btn.disabled = true;
   try {
-    const res = await api("/api/download", {
-      method: "POST",
-      body: {
-        items,
-        mode: state.mode,
-        quality: currentQuality(),
-        playlist_title: isList ? a.title : null,
-        number_files: isList && state.numberFiles,
-      },
-    });
+    const res = await api("/api/download", { method: "POST", body });
     if (res.queued) toast(`Added ${res.queued} ${res.queued === 1 ? "download" : "downloads"} to the queue.`, "ok");
     else toast("That is already in the queue.");
     state.analysis = null;
@@ -427,7 +563,9 @@ function matchesFilter(job) {
 }
 
 function badgeText(job) {
+  if (job.kind === "photo") return "PHOTO";
   if (job.mode === "audio") return `MP3 ${job.quality}`;
+  if (job.source === "instagram") return "VIDEO";
   return job.quality === "best" ? "MP4 BEST" : `MP4 ${job.quality}p`;
 }
 
@@ -453,7 +591,7 @@ function createJobEl(job) {
   const el = document.createElement("div");
   el.dataset.id = job.id;
   el.innerHTML = `
-    <div class="job-thumb">${job.mode === "audio" ? ICON.music : ICON.video}</div>
+    <div class="job-thumb">${job.kind === "photo" ? ICON.image : job.mode === "audio" ? ICON.music : ICON.video}</div>
     <div class="job-body">
       <div class="job-line"><span class="badge"></span><span class="job-title"></span></div>
       <div class="bar"><i></i></div>
@@ -480,13 +618,14 @@ function updateJobEl(el, job) {
       img.referrerPolicy = "no-referrer";
       img.alt = "";
       img.onerror = () => img.remove();
-      img.src = job.thumbnail;
+      img.src = thumbSrc(job.thumbnail);
       holder.append(img);
     }
   }
   const badge = $(".badge", el);
   badge.textContent = badgeText(job);
-  badge.classList.toggle("audio", job.mode === "audio");
+  badge.classList.toggle("audio", job.mode === "audio" && job.kind !== "photo");
+  badge.classList.toggle("ig", job.kind === "photo");
   const title = $(".job-title", el);
   title.textContent = job.title;
   title.title = job.title;
@@ -636,7 +775,8 @@ queueEl.addEventListener("click", async (e) => {
       case "play": {
         const rel = relLibraryPath(job.filepath);
         if (!rel) return toast("This file is outside the current download folder.", "bad");
-        return playFile({ path: rel, name: job.title, kind: job.mode === "audio" ? "audio" : "video" });
+        const kind = job.kind === "photo" ? "image" : job.mode === "audio" ? "audio" : "video";
+        return playFile({ path: rel, name: job.title, kind });
       }
     }
     pollJobs();
@@ -662,7 +802,8 @@ async function loadLibrary() {
     const data = await api("/api/library");
     state.library = data.files;
     $("#statFiles").textContent = data.files.length;
-    $("#statSplit").textContent = `${data.audio_count} audio · ${data.video_count} video`;
+    $("#statSplit").textContent = `${data.audio_count} audio · ${data.video_count} video` +
+      (data.image_count ? ` · ${data.image_count} ${data.image_count === 1 ? "photo" : "photos"}` : "");
     $("#statSize").textContent = fmtBytes(data.total_size);
     $("#libraryPath").textContent = `Saved in ${data.download_dir}`;
     renderLibrary();
@@ -675,9 +816,10 @@ function renderLibrary() {
     (state.libKind === "all" || f.kind === state.libKind) &&
     (!q || f.name.toLowerCase().includes(q) || f.folder.toLowerCase().includes(q)));
   const shown = files.slice(0, LIB_RENDER_LIMIT);
+  const icon = (kind) => (kind === "audio" ? ICON.music : kind === "image" ? ICON.image : ICON.video);
   $("#libList").innerHTML = shown.map((f) => `
     <div class="lib-row" data-path="${esc(f.path)}">
-      <button class="lib-icon ${f.kind}" data-lib-act="play" title="Play" aria-label="Play">${f.kind === "audio" ? ICON.music : ICON.video}</button>
+      <button class="lib-icon ${f.kind}" data-lib-act="play" title="Open" aria-label="Open">${icon(f.kind)}</button>
       <div class="lib-name"><strong title="${esc(f.name)}">${esc(f.name)}</strong><span>${esc(f.folder || "Downloads")} · ${f.ext.toUpperCase()}</span></div>
       <div class="lib-info">${fmtBytes(f.size)}<br>${fmtDate(f.modified)}</div>
       <div class="lib-actions">
@@ -733,6 +875,7 @@ $("#openFolderLib").addEventListener("click", openFolder);
 
 const audioEl = $("#audioEl");
 const videoEl = $("#videoEl");
+const imageEl = $("#imageEl");
 let currentMedia = null;
 
 const mediaUrl = (path) => "/media/" + path.split("/").map(encodeURIComponent).join("/");
@@ -740,6 +883,7 @@ const mediaUrl = (path) => "/media/" + path.split("/").map(encodeURIComponent).j
 function stopMedia() {
   audioEl.pause(); audioEl.removeAttribute("src"); audioEl.load();
   videoEl.pause(); videoEl.removeAttribute("src"); videoEl.load();
+  imageEl.removeAttribute("src");
   $("#player").hidden = true;
   $("#videoModal").hidden = true;
   currentMedia = null;
@@ -753,9 +897,16 @@ function playFile(file) {
     $("#player").hidden = false;
     audioEl.src = mediaUrl(file.path);
     audioEl.play().catch(() => {});
+    return;
+  }
+  const isImage = file.kind === "image";
+  $("#videoTitle").textContent = file.name;
+  videoEl.hidden = isImage;
+  imageEl.hidden = !isImage;
+  $("#videoModal").hidden = false;
+  if (isImage) {
+    imageEl.src = mediaUrl(file.path);
   } else {
-    $("#videoTitle").textContent = file.name;
-    $("#videoModal").hidden = false;
     videoEl.src = mediaUrl(file.path);
     videoEl.play().catch(() => {});
   }
@@ -777,6 +928,15 @@ function fillSettings(s) {
   $("#setConcurrent").textContent = s.max_concurrent;
   $("#setThumb").checked = s.embed_thumbnail;
   $("#setMeta").checked = s.embed_metadata;
+
+  const fileName = (s.instagram_cookies || "").split(/[\\/]/).pop();
+  $("#igStatus").textContent = s.instagram_connected
+    ? `Connected using ${fileName}. Stories and private posts you can see are available.`
+    : s.instagram_cookies
+      ? `The cookies file ${fileName} is missing. Choose it again.`
+      : "Not connected. Stories always need a login. Reels, posts and profile pictures may work without one.";
+  $("#igRemoveBtn").hidden = !s.instagram_cookies;
+  $("#igChooseBtn").textContent = s.instagram_cookies ? "Change file…" : "Choose cookies file…";
 }
 
 async function loadSettings() {
@@ -818,6 +978,21 @@ $("#concurrency").addEventListener("click", (e) => {
   const next = Math.max(1, Math.min(6, (state.settings.max_concurrent || 3) + step));
   if (next !== state.settings.max_concurrent) saveSettings({ max_concurrent: next });
 });
+$("#igChooseBtn").addEventListener("click", async () => {
+  const btn = $("#igChooseBtn");
+  btn.disabled = true;
+  toast("A file picker opened on your PC. It may be behind this window.");
+  try {
+    const res = await api("/api/pick-cookies", { method: "POST" });
+    if (res.path) await saveSettings({ instagram_cookies: res.path }, "Instagram login connected.");
+  } catch (err) {
+    toast(err.message, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+$("#igRemoveBtn").addEventListener("click", () => saveSettings({ instagram_cookies: "" }, "Instagram login removed."));
+$("#igHelpBtn").addEventListener("click", () => { $("#igHelp").hidden = !$("#igHelp").hidden; });
 $("#setThumb").addEventListener("change", (e) => saveSettings({ embed_thumbnail: e.target.checked }));
 $("#setMeta").addEventListener("change", (e) => saveSettings({ embed_metadata: e.target.checked }));
 
